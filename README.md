@@ -4,7 +4,22 @@
 
 A self-hosted company noticeboard. HR posts notices, and everyone on the company network can read them on a desktop browser, a phone or a wall screen. Nothing is sent outside your network.
 
-## Installing on Windows (recommended)
+## Installing on Windows with the MSI (recommended for IT)
+
+`staffroom-gazette-v<version>-x64.msi` is a standard Windows Installer package. **Node.js is built in**, so nothing else needs installing.
+
+- **To install:** double-click it, or install silently with `msiexec /i staffroom-gazette-v0.0.1-x64.msi /qn` (Intune or Group Policy work too).
+- **Options:** `PORT=8080` sets the port (the default is 3000, and upgrades remember it). `NOFIREWALL=1` skips the firewall rules.
+- **What it sets up:**
+  - a **Staffroom Gazette Windows service**, running as the low-privilege LocalService account. It starts automatically and restarts if it stops
+  - firewall rules for **Domain and Private** networks
+  - Start menu shortcuts (the Gazette, the TV display, and the log)
+  - an entry in Settings → Apps
+- **Where things go:** program files go to `C:\Program Files\Staffroom Gazette`. Data goes to `C:\ProgramData\Staffroom Gazette\data`, which only administrators and the service can open, and logs to `…\logs`.
+- **Upgrading:** install the newer MSI over the top. **Uninstalling:** use Settings → Apps. Your data is **kept** either way.
+- **Troubleshooting:** stop the service and run `"C:\Program Files\Staffroom Gazette\StaffroomGazetteService.exe" --console`. The service's own log is `…\logs\service.log`.
+
+## Installing on Windows with the script (zip)
 
 1. Download `staffroom-gazette-v<version>.zip` from the [Releases page](https://github.com/riku593/staffroom-gazette/releases). You can check the download against the `.sha256` file:
    ```powershell
@@ -131,7 +146,9 @@ public/vendor/pdfjs Mozilla PDF.js 6.5 (Apache-2.0), bundled so no install is ne
 public/vendor/tesseract  Tesseract.js 7 + English data (Apache-2.0), bundled for offline OCR
 lib/pdftext.js      Reads PDF text and works out the headline, summary, category and dates
 Install.cmd         Double-click Windows installer (runs installer/install.ps1)
-installer/          install.ps1 and uninstall.ps1
+installer/          install.ps1 and uninstall.ps1 (zip install)
+installer/msi/      WiX definition and the Windows service wrapper (MSI install)
+tools/build-msi.ps1 Builds the MSI and .sha256 (npm run msi)
 tools/make-release.ps1  Builds the release zip and .sha256 (npm run release)
 sharepoint/         The SharePoint Online version (separate build; not in server releases)
 data/               Created on first run when run manually; holds gazette.json and uploads/
@@ -141,4 +158,8 @@ data/               Created on first run when run manually; holds gazette.json a
 
 1. Set `version` in `package.json` and commit.
 2. Run `npm run release`. This builds `dist/staffroom-gazette-v<version>.zip` from the last commit, with `git archive`, plus a `.zip.sha256` checksum. The zip contains only the server, the installer and docs. It leaves out `sharepoint/`, `tools/`, local data and uncommitted changes.
-3. Create a GitHub release tagged `v<version>` and attach both files.
+3. Run `npm run msi`. This builds `dist/staffroom-gazette-v<version>-x64.msi` and its `.sha256`, and needs the .NET SDK. It:
+   - uses WiX Toolset **5.0.2**, which is MS-RL licensed, pinned as a local dotnet tool in `.config/dotnet-tools.json`
+   - downloads the pinned Node.js from nodejs.org and checks it against the official `SHASUMS256.txt`
+   - compiles the service wrapper (`installer/msi/service/GazetteService.cs`) with the C# compiler that comes with Windows
+4. Create a GitHub release tagged `v<version>` and attach the files.

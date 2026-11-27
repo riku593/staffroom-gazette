@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Staffroom Gazette MSI (WiX Toolset 5). Built by tools/build-msi.ps1, which
+  passes -d Version=... and -d StageDir=... (the staged app, node.exe and service).
+
+  Installs:
+    C:\Program Files\Staffroom Gazette\                 service wrapper
+                                     \app\              server.js, lib, public
+                                     \node\node.exe     bundled Node.js
+    C:\ProgramData\Staffroom Gazette\data\              notices, accounts, uploads (kept on uninstall)
+                                    \logs\              gazette.log, service.log
+  A "Staffroom Gazette" Windows service (LocalService), firewall rules for the
+  port (Domain + Private networks), Start menu shortcuts.
+
+  Properties (msiexec ... PROPERTY=value):
+    PORT=3000        port to listen on (remembered for upgrades)
+    NOFIREWALL=1     don't add firewall rules
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall">
+
+  <Package Name="Staffroom Gazette"
+           Manufacturer="Staffroom Gazette"
+           Version="$(Version)"
+           UpgradeCode="6C90B27F-9896-42F9-9ADA-E60BC9267B99"
+           Scope="perMachine"
+           Compressed="yes">
+
+    <SummaryInformation Description="Staffroom Gazette $(Version) - HR noticeboard server" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Staffroom Gazette is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- Settings > Apps -->
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/riku593/staffroom-gazette" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/riku593/staffroom-gazette#readme" />
+    <!-- (WixUI_Minimal already sets ARPNOMODIFY) -->
+
+    <!-- PORT: command line wins, then the value from a previous install, then 3000. -->
+    <SetProperty Id="CMDLINE_PORT" Action="SaveCmdLinePort" Value="[PORT]" Before="AppSearch" Sequence="first" Condition="PORT" />
+    <Property Id="PORT" Secure="yes">
+      <RegistrySearch Id="PreviousPort" Root="HKLM" Key="SOFTWARE\Staffroom Gazette" Name="Port" Type="raw" />
+    </Property>
+    <SetProperty Id="PORT" Action="RestoreCmdLinePort" Value="[CMDLINE_PORT]" After="AppSearch" Sequence="first" Condition="CMDLINE_PORT" />
+    <SetProperty Id="PORT" Action="DefaultPort" Value="3000" After="RestoreCmdLinePort" Sequence="first" Condition="NOT PORT" />
+    <Property Id="NOFIREWALL" Secure="yes" />
+
+    <!-- ================================================================ -->
+    <!-- Folders                                                          -->
+    <!-- ================================================================ -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Staffroom Gazette">
+        <Directory Id="AppDir" Name="app" />
+        <Directory Id="NodeDir" Name="node" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DATAFOLDER" Name="Staffroom Gazette">
+        <Directory Id="DataSubDir" Name="data" />
+        <Directory Id="LogsDir" Name="logs" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="MenuDir" Name="Staffroom Gazette" />
+    </StandardDirectory>
+
+    <!-- ================================================================ -->
+    <!-- Program files                                                    -->
+    <!-- ================================================================ -->
+    <ComponentGroup Id="AppFiles" Directory="AppDir">
+      <Files Include="$(StageDir)\app\**" />
+    </ComponentGroup>
+    <ComponentGroup Id="NodeFiles" Directory="NodeDir">
+      <Files Include="$(StageDir)\node\**" />
+    </ComponentGroup>
+
+    <!-- The Windows service -->
+    <Component Id="Service" Directory="INSTALLFOLDER">
+      <File Id="ServiceExe" Source="$(StageDir)\StaffroomGazetteService.exe" KeyPath="yes" />
+      <ServiceInstall Id="GazetteService"
+                      Name="StaffroomGazette"
+                      DisplayName="Staffroom Gazette"
+                      Description="Runs the Staffroom Gazette noticeboard for your network."
+                      Type="ownProcess"
+                      Start="auto"
+                      ErrorControl="normal"
+                      Account="NT AUTHORITY\LocalService"
+                      Vital="yes">
+        <util:ServiceConfig FirstFailureActionType="restart"
+                            SecondFailureActionType="restart"
+                            ThirdFailureActionType="restart"
+                            RestartServiceDelayInSeconds="60"
+                            ResetPeriodInDays="1" />
+      </ServiceInstall>
+      <ServiceControl Id="GazetteServiceControl" Name="StaffroomGazette" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+    </Component>
+
+    <!-- Settings read by the service -->
+    <Component Id="Settings" Directory="INSTALLFOLDER" Guid="E4D59433-6488-4394-AD13-71C999E055DF">
+      <RegistryKey Root="HKLM" Key="SOFTWARE\Staffroom Gazette">
+        <RegistryValue Name="Port" Type="string" Value="[PORT]" KeyPath="yes" />
+        <RegistryValue Name="DataDir" Type="string" Value="[DATAFOLDER]" />
+        <RegistryValue Name="Version" Type="string" Value="$(Version)" />
+      </RegistryKey>
+    </Component>
+
+    <!-- ================================================================ -->
+    <!-- Data folders: kept on uninstall; locked down                      -->
+    <!-- ================================================================ -->
+    <!-- data: SYSTEM + Administrators full control, the service (LocalService) can modify. -->
+    <Component Id="DataFolder" Directory="DataSubDir" Guid="56B85B2F-7AD4-46EA-9C04-4A0346D0E95F" Permanent="yes">
+      <CreateFolder>
+        <PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;LS)" />
+      </CreateFolder>
+    </Component>
+    <!-- logs: same, plus read access for signed-in users so the Start menu log shortcut works. -->
+    <Component Id="LogsFolder" Directory="LogsDir" Guid="CB32E037-6F1D-44F4-904F-4B04ED9C2132" Permanent="yes">
+      <CreateFolder>
+        <PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;LS)(A;OICI;0x1200a9;;;BU)" />
+      </CreateFolder>
+    </Component>
+
+    <!-- ================================================================ -->
+    <!-- Firewall (Domain and Private networks only)                       -->
+    <!-- ================================================================ -->
+    <Component Id="Firewall" Directory="INSTALLFOLDER" Guid="3955E8E9-BA0E-4225-99C4-2A4B815A57DE" Condition="NOT NOFIREWALL">
+      <RegistryValue Root="HKLM" Key="SOFTWARE\Staffroom Gazette" Name="FirewallRules" Type="integer" Value="1" KeyPath="yes" />
+      <fw:FirewallException Id="FirewallDomain" Name="Staffroom Gazette (Domain)" Port="[PORT]" Protocol="tcp" Scope="any" Profile="domain"
+                            Description="Lets staff on the office network open Staffroom Gazette." />
+      <fw:FirewallException Id="FirewallPrivate" Name="Staffroom Gazette (Private)" Port="[PORT]" Protocol="tcp" Scope="any" Profile="private"
+                            Description="Lets staff on the office network open Staffroom Gazette." />
+    </Component>
+
+    <!-- ================================================================ -->
+    <!-- Start menu                                                       -->
+    <!-- ================================================================ -->
+    <Component Id="Shortcuts" Directory="MenuDir" Guid="08E59808-41DE-49D1-9C6D-F95C24734E15">
+      <util:InternetShortcut Id="OpenGazette" Name="Staffroom Gazette" Target="http://localhost:[PORT]/" />
+      <util:InternetShortcut Id="OpenTv" Name="Staffroom Gazette TV display" Target="http://localhost:[PORT]/tv" />
+      <Shortcut Id="LogShortcut" Name="Staffroom Gazette log" Target="[WindowsFolder]notepad.exe"
+                Arguments="&quot;[LogsDir]gazette.log&quot;" Description="Open the Staffroom Gazette log" />
+      <RemoveFolder Id="RemoveMenuDir" On="uninstall" />
+      <!-- Windows Installer rules (ICE38/43/57) want a per-user key path for Start menu shortcuts. -->
+      <RegistryValue Root="HKCU" Key="SOFTWARE\Staffroom Gazette" Name="Shortcuts" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Feature Id="Main" Title="Staffroom Gazette" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentGroupRef Id="NodeFiles" />
+      <ComponentRef Id="Service" />
+      <ComponentRef Id="Settings" />
+      <ComponentRef Id="DataFolder" />
+      <ComponentRef Id="LogsFolder" />
+      <ComponentRef Id="Firewall" />
+      <ComponentRef Id="Shortcuts" />
+    </Feature>
+
+    <!-- ================================================================ -->
+    <!-- UI: licence, progress, and "open the Gazette now" at the end      -->
+    <!-- ================================================================ -->
+    <ui:WixUI Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(StageDir)\License.rtf" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open Staffroom Gazette now to create the first HR admin account" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <SetProperty Id="WixShellExecTarget" Action="SetBrowserTarget" Value="http://localhost:[PORT]/" After="DefaultPort" Sequence="ui" />
+    <CustomAction Id="OpenGazetteInBrowser" BinaryRef="Wix4UtilCA_X64" DllEntry="WixShellExec" Impersonate="yes" />
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="OpenGazetteInBrowser"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
+  </Package>
+</Wix>

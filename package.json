@@ -1,0 +1,14 @@
+{
+  "name": "staffroom-gazette",
+  "version": "1.0.0",
+  "description": "Staffroom Gazette - a self-hosted company noticeboard for HR teams",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED"
+}

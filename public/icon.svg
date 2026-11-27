@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#1d1a16"/>
+  <rect x="96" y="112" width="320" height="288" rx="16" fill="#f7f2e8"/>
+  <rect x="128" y="144" width="256" height="20" fill="#1d1a16"/>
+  <rect x="128" y="172" width="256" height="6" fill="#1d1a16"/>
+  <text x="256" y="268" font-family="Georgia, 'Times New Roman', serif" font-size="96" font-weight="700" text-anchor="middle" fill="#1d1a16">SG</text>
+  <rect x="128" y="300" width="116" height="10" fill="#8a2b1d"/>
+  <rect x="128" y="322" width="116" height="10" fill="#7a7266"/>
+  <rect x="128" y="344" width="90" height="10" fill="#7a7266"/>
+  <rect x="268" y="300" width="116" height="10" fill="#7a7266"/>
+  <rect x="268" y="322" width="116" height="10" fill="#7a7266"/>
+  <rect x="268" y="344" width="80" height="10" fill="#7a7266"/>
+</svg>

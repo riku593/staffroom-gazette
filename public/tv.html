@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0f0d09">
+  <title>The Staffroom Gazette — TV</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/tv.css">
+  <script src="/richtext.js" defer></script>
+  <script src="/pdfview.js" defer></script>
+  <script src="/tv.js" defer></script>
+</head>
+<body>
+  <header class="tv-top">
+    <div class="tv-brand"><span class="the">The</span> Staffroom Gazette</div>
+    <div class="tv-clock">
+      <div id="time" class="time"></div>
+      <div id="date" class="date"></div>
+    </div>
+  </header>
+
+  <main id="stage" class="stage" aria-live="polite"></main>
+
+  <footer class="tv-bottom">
+    <div class="progress"><span id="progress"></span></div>
+    <div class="tv-bottom-row">
+      <span id="counter" class="counter"></span>
+      <span id="next" class="next"></span>
+      <span id="conn" class="conn">Connecting…</span>
+    </div>
+  </footer>
+
+  <button id="fullscreen" class="fs-btn" type="button">Full screen <kbd>F</kbd></button>
+  <div id="help" class="help" hidden>
+    <b>Keyboard:</b> → next &nbsp; ← previous &nbsp; Space pause &nbsp; F full screen
+  </div>
+</body>
+</html>

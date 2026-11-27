@@ -1,0 +1,12 @@
+{
+  "name": "The Staffroom Gazette",
+  "short_name": "Gazette",
+  "description": "Company notices from HR",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f2e8",
+  "theme_color": "#1d1a16",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

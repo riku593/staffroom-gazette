@@ -1,0 +1,59 @@
+'use strict';
+
+/*
+ * Notice formatting shared by the board and the TV display.
+ * Turns plain text into safe DOM: paragraphs, "- " bullets, **bold**, links.
+ * Text is never parsed as HTML.
+ */
+window.RichText = (function () {
+  const make = (tag, attrs = {}, text) => {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text != null) node.textContent = text;
+    return node;
+  };
+
+  function inline(text, { links = true } = {}) {
+    const frag = document.createDocumentFragment();
+    const re = /(\*\*([^*]+)\*\*)|(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])|([\w.+-]+@[\w-]+\.[\w.-]+)/g;
+    let last = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) frag.append(text.slice(last, m.index));
+      if (m[1]) frag.append(make('strong', {}, m[2]));
+      else if (!links) frag.append(make('span', { class: 'link' }, m[3] || m[4]));
+      else if (m[3]) frag.append(make('a', { href: m[3], target: '_blank', rel: 'noopener noreferrer' }, m[3]));
+      else frag.append(make('a', { href: `mailto:${m[4]}` }, m[4]));
+      last = re.lastIndex;
+    }
+    if (last < text.length) frag.append(text.slice(last));
+    return frag;
+  }
+
+  // options.links = false renders addresses as plain styled text (e.g. on a TV nobody can click).
+  function render(text, options) {
+    const frag = document.createDocumentFragment();
+    for (const block of String(text || '').replace(/\r\n/g, '\n').split(/\n{2,}/)) {
+      const lines = block.split('\n');
+      if (lines.every((l) => /^\s*[-*•]\s+/.test(l))) {
+        const ul = make('ul');
+        for (const l of lines) {
+          const li = make('li');
+          li.append(inline(l.replace(/^\s*[-*•]\s+/, ''), options));
+          ul.append(li);
+        }
+        frag.append(ul);
+      } else {
+        const p = make('p');
+        lines.forEach((l, i) => {
+          if (i) p.append(make('br'));
+          p.append(inline(l, options));
+        });
+        frag.append(p);
+      }
+    }
+    return frag;
+  }
+
+  return { render };
+})();

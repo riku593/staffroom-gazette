@@ -1,0 +1,512 @@
+'use strict';
+
+/*
+ * Staffroom Gazette — TV display.
+ * Cycles through live notices full screen. PDF notices are shown page by page
+ * (two pages side by side when portrait pages meet a landscape screen).
+ *
+ * URL options (all optional):
+ *   /tv?interval=20          seconds per slide (default 15)
+ *   /tv?category=Events,People   only these categories
+ *   /tv?pages=8              most PDF pages to show per notice (default 8)
+ *   /tv?theme=light          light colours (default dark, easier on a TV)
+ */
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const el = (tag, attrs = {}, ...children) => {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) if (v !== false && v != null) node.setAttribute(k, v);
+  for (const c of children.flat()) if (c != null && c !== false) node.append(c.nodeType ? c : document.createTextNode(c));
+  return node;
+};
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+const params = new URLSearchParams(location.search);
+const INTERVAL = clamp(Number(params.get('interval')) || 15, 5, 600) * 1000;
+const MAX_PAGES = clamp(Number(params.get('pages')) || 8, 1, 100);
+const CATEGORIES = (params.get('category') || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+if (params.get('theme') === 'light') document.documentElement.dataset.theme = 'light';
+
+const stage = $('#stage');
+let notices = [];
+let index = 0;
+let current = null; // { id, updatedAt } of the notice on screen
+let showingEmpty = false;
+let paused = false;
+let waiter = null;
+
+/* ---------------- Timing ---------------- */
+
+// Wait for a slide's time to run out, or until something skips it.
+// Resolves with 'done' | 'next' | 'prev' | 'reload'.
+function wait(ms) {
+  return new Promise((resolve) => {
+    const w = { resolve, remaining: ms, started: Date.now(), timer: null };
+    w.finish = (reason) => {
+      clearTimeout(w.timer);
+      if (waiter === w) waiter = null;
+      resolve(reason);
+    };
+    waiter = w;
+    startProgress(ms);
+    if (!paused) w.timer = setTimeout(() => w.finish('done'), ms);
+  });
+}
+
+function skip(reason) {
+  if (waiter) waiter.finish(reason);
+}
+
+function togglePause() {
+  paused = !paused;
+  const bar = $('#progress');
+  bar.classList.toggle('paused', paused);
+  setConn();
+  if (!waiter) return;
+  if (paused) {
+    clearTimeout(waiter.timer);
+    waiter.remaining -= Date.now() - waiter.started;
+  } else {
+    waiter.started = Date.now();
+    const w = waiter;
+    w.timer = setTimeout(() => w.finish('done'), Math.max(0, w.remaining));
+  }
+}
+
+function startProgress(ms) {
+  const bar = $('#progress');
+  bar.classList.remove('run');
+  void bar.offsetWidth; // restart the CSS animation
+  bar.style.animationDuration = `${ms}ms`;
+  bar.classList.add('run');
+  bar.classList.toggle('paused', paused);
+}
+
+/* ---------------- Slides ---------------- */
+
+function relTime(iso) {
+  const days = Math.floor((Date.now() - new Date(iso)) / 86400000);
+  if (days < 1) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days} days ago`;
+  return new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'long' }).format(new Date(iso));
+}
+
+function kicker(n) {
+  return el('div', { class: 'kicker' },
+    el('span', {}, n.category),
+    n.priority !== 'normal' && el('span', { class: `badge ${n.priority}` }, n.priority),
+    n.pinned && el('span', { class: 'badge pinned' }, 'Pinned'));
+}
+
+const shownDate = (n) => (n.publishAt && n.publishAt > n.createdAt ? n.publishAt : n.createdAt);
+
+function textSlide(n) {
+  return el('section', { class: `slide text ${n.priority}` },
+    kicker(n),
+    el('h1', { class: n.title.length > 70 ? 'long' : null }, n.title),
+    el('div', { class: 'body' }, RichText.render(n.body, { links: false })),
+    el('div', { class: 'byline' }, `${n.authorName} · ${relTime(shownDate(n))}`));
+}
+
+function pdfSlide(n) {
+  return el('section', { class: `slide pdf ${n.priority}` },
+    el('div', { class: 'pdf-side' },
+      kicker(n),
+      el('h1', {}, n.title),
+      el('div', { class: 'summary body' }, n.body ? RichText.render(n.body, { links: false }) : null),
+      el('div', { class: 'pageinfo' }),
+      el('div', { class: 'byline' }, `${n.authorName} · ${relTime(shownDate(n))}`)),
+    el('div', { class: 'pdf-pages' }));
+}
+
+// Text read out of a PDF, shown in large type (for letters and policies).
+function pdfTextSlide(n, paras, part) {
+  return el('section', { class: `slide text pdftext ${n.priority}` },
+    kicker(n),
+    el('h1', { class: n.title.length > 70 ? 'long' : null }, n.title),
+    el('div', { class: 'body' }, paras.map((p) => RichText.render(p, { links: false }))),
+    el('div', { class: 'byline' }, `${n.authorName} · ${relTime(shownDate(n))} · ${n.attachment.textSource === 'ocr' ? `Text read from the ${n.attachment.kind === 'image' ? 'image' : 'scan'} by OCR and checked by HR` : 'From the attached PDF'}${part ? ` · ${part}` : ''}`));
+}
+
+function emptySlide() {
+  return el('section', { class: 'slide empty' },
+    el('h1', {}, 'No notices right now'),
+    el('p', {}, 'New notices from HR will appear here automatically.'));
+}
+
+// Shrink the body text until it fits its box.
+function fitText(box, lo = 1.8, hi = 4.4) {
+  if (!box || !box.textContent.trim()) return;
+  for (let i = 0; i < 8; i++) {
+    const mid = (lo + hi) / 2;
+    box.style.fontSize = `${mid}vh`;
+    if (box.scrollHeight <= box.clientHeight + 1) lo = mid;
+    else hi = mid;
+  }
+  box.style.fontSize = `${lo}vh`;
+}
+
+function mount(slide) {
+  stage.append(slide);
+}
+
+function reveal(slide) {
+  for (const old of stage.querySelectorAll('.slide')) {
+    if (old === slide) continue;
+    if (old.classList.contains('in')) {
+      old.classList.remove('in');
+      old.classList.add('out');
+      setTimeout(() => old.remove(), 900);
+    } else if (!old.classList.contains('out')) {
+      old.remove(); // prepared but never shown
+    }
+  }
+  void slide.offsetWidth;
+  slide.classList.add('in');
+}
+
+/* ---------------- Playback ---------------- */
+
+function wrapIndex() {
+  index = ((index % notices.length) + notices.length) % notices.length;
+}
+
+async function playText(n) {
+  const slide = textSlide(n);
+  mount(slide);
+  fitText($('.body', slide));
+  reveal(slide);
+  updateFooter();
+  const words = `${n.title} ${n.body}`.split(/\s+/).length;
+  return wait(words > 60 ? INTERVAL * 1.5 : INTERVAL);
+}
+
+async function playPdf(n) {
+  const url = PdfView.urlFor(n.attachment);
+  let slide = pdfSlide(n);
+  mount(slide);
+  fitText($('.summary', slide), 1.8, 2.8);
+  let doc;
+  try {
+    doc = await PdfView.load(url);
+  } catch {
+    $('.pdf-pages', slide).append(el('p', { class: 'pdf-error' }, 'This PDF could not be displayed.'));
+    reveal(slide);
+    updateFooter();
+    return wait(INTERVAL);
+  }
+
+  const total = Math.min(doc.numPages, MAX_PAGES);
+  const box = $('.pdf-pages', slide).getBoundingClientRect();
+  const first = await PdfView.pageSize(doc, 1);
+  const twoUp = total > 1 && box.width / box.height > 1.25 && first.width / first.height < 1;
+  const perView = twoUp ? 2 : 1;
+  const gap = window.innerWidth * 0.02;
+
+  for (let start = 1; start <= total; start += perView) {
+    if (start > 1) {
+      slide = pdfSlide(n);
+      mount(slide);
+      fitText($('.summary', slide), 1.8, 2.8);
+    }
+    const end = Math.min(start + perView - 1, total);
+    const info = $('.pageinfo', slide);
+    if (doc.numPages > 1) {
+      info.textContent = `Page ${start}${end > start ? `–${end}` : ''} of ${doc.numPages}`
+        + (doc.numPages > total ? ` · first ${total} shown — see the board for the rest` : '');
+    }
+    const pagesBox = $('.pdf-pages', slide);
+    const w = (box.width - gap * (end - start)) / (end - start + 1);
+    try {
+      for (let p = start; p <= end; p++) {
+        const canvas = el('canvas', { role: 'img', 'aria-label': `Page ${p}` });
+        pagesBox.append(canvas);
+        await PdfView.renderPage(doc, p, canvas, { maxWidth: w, maxHeight: box.height, mode: 'contain' });
+      }
+    } catch {
+      pagesBox.replaceChildren(el('p', { class: 'pdf-error' }, 'This page could not be displayed.'));
+    }
+    reveal(slide);
+    updateFooter();
+    if (end >= total) preloadNext();
+    const result = await wait(INTERVAL);
+    if (result === 'prev' || result === 'reload') return result;
+    // 'done' or 'next' moves on to the next page(s)
+  }
+  return 'next';
+}
+
+// Should this PDF notice show its text rather than its pages?
+function showsText(n) {
+  const a = n.attachment;
+  if (!a || !a.text) return false;
+  if (a.textSource === 'ocr') return n.tvMode === 'text'; // checked OCR text, only when HR asked for it
+  if (a.hasText === false) return false;
+  return n.tvMode === 'text' || (n.tvMode !== 'pages' && a.textHeavy);
+}
+
+// The PDF's paragraphs, minus anything above (and including) the headline,
+// e.g. a letterhead, since the headline is already shown.
+function pdfParagraphs(n) {
+  const norm = (t) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const paras = n.attachment.text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  const title = norm(n.title);
+  const at = paras.slice(0, 4).findIndex((p) => norm(p) === title);
+  return at >= 0 ? paras.slice(at + 1) : paras;
+}
+
+// Split paragraphs into screenfuls by measuring them in a hidden slide.
+function chunkParagraphs(n, paras, fontVh) {
+  const probe = pdfTextSlide(n, [], 'part 1 of 1');
+  mount(probe);
+  const body = $('.body', probe);
+  body.style.fontSize = `${fontVh}vh`;
+  const overflows = () => body.scrollHeight > body.clientHeight + 1;
+  const chunks = [];
+  let cur = [];
+  for (const p of paras) {
+    body.append(RichText.render(p, { links: false }));
+    if (overflows()) {
+      if (cur.length) {
+        chunks.push(cur);
+        cur = [];
+        body.replaceChildren(RichText.render(p, { links: false }));
+      }
+      if (overflows()) { // one very long paragraph: give it a slide of its own (text shrinks to fit)
+        chunks.push([p]);
+        body.replaceChildren();
+        continue;
+      }
+    }
+    cur.push(p);
+  }
+  if (cur.length) chunks.push(cur);
+  probe.remove();
+  return chunks;
+}
+
+async function playPdfText(n) {
+  const paras = pdfParagraphs(n);
+  // Use the larger type unless slightly smaller type saves a slide.
+  let fontVh = 3.4;
+  let all = chunkParagraphs(n, paras, fontVh);
+  if (all.length > 1) {
+    const smaller = chunkParagraphs(n, paras, 2.9);
+    if (smaller.length < all.length) {
+      all = smaller;
+      fontVh = 2.9;
+    }
+  }
+  // Long documents get at most 4 screens of text (or fewer with ?pages=) so one notice can't hog the TV.
+  const chunks = all.slice(0, Math.min(MAX_PAGES, 4));
+  if (!chunks.length) return playPdf(n);
+  for (let i = 0; i < chunks.length; i++) {
+    let part = chunks.length > 1 ? `part ${i + 1} of ${chunks.length}` : '';
+    if (all.length > chunks.length && i === chunks.length - 1) part += ' · see the board for the rest';
+    const slide = pdfTextSlide(n, chunks[i], part);
+    mount(slide);
+    const body = $('.body', slide);
+    body.style.fontSize = `${fontVh}vh`;
+    if (chunks.length === 1 || body.scrollHeight > body.clientHeight + 1) fitText(body, 1.8, 4.2);
+    reveal(slide);
+    updateFooter();
+    if (i === chunks.length - 1) preloadNext();
+    const words = chunks[i].join(' ').split(/\s+/).length;
+    const result = await wait(words > 60 ? INTERVAL * 1.5 : INTERVAL);
+    if (result === 'prev' || result === 'reload') return result;
+  }
+  return 'next';
+}
+
+async function playImage(n) {
+  const slide = pdfSlide(n);
+  mount(slide);
+  fitText($('.summary', slide), 1.8, 2.8);
+  const box = $('.pdf-pages', slide);
+  const img = el('img', { class: 'tv-image', src: PdfView.urlFor(n.attachment), alt: n.title });
+  box.append(img);
+  try {
+    await img.decode();
+  } catch {
+    box.replaceChildren(el('p', { class: 'pdf-error' }, 'This image could not be displayed.'));
+  }
+  reveal(slide);
+  updateFooter();
+  preloadNext();
+  return wait(INTERVAL);
+}
+
+function preloadNext() {
+  if (notices.length < 2) return;
+  const n = notices[(index + 1) % notices.length];
+  if (n && n.attachment && n.attachment.kind !== 'image' && !showsText(n)) PdfView.load(PdfView.urlFor(n.attachment)).catch(() => {});
+}
+
+async function play() {
+  for (;;) {
+    if (!notices.length) {
+      current = null;
+      if (!showingEmpty) {
+        const slide = emptySlide();
+        mount(slide);
+        reveal(slide);
+        showingEmpty = true;
+      }
+      updateFooter();
+      await wait(INTERVAL);
+      continue;
+    }
+    showingEmpty = false;
+    wrapIndex();
+    const n = notices[index];
+    current = { id: n.id, updatedAt: n.updatedAt };
+    let result;
+    if (!n.attachment) result = await playText(n);
+    else if (showsText(n)) result = await playPdfText(n);
+    else if (n.attachment.kind === 'image') result = await playImage(n);
+    else result = await playPdf(n);
+    if (result === 'prev') index--;
+    else if (result !== 'reload') index++;
+  }
+}
+
+/* ---------------- Footer ---------------- */
+
+function updateFooter() {
+  if (!notices.length) {
+    $('#counter').textContent = '';
+    $('#next').textContent = '';
+    return;
+  }
+  $('#counter').textContent = `${index + 1} of ${notices.length}`;
+  const next = notices.length > 1 ? notices[(index + 1) % notices.length] : null;
+  $('#next').replaceChildren(...(next ? ['Up next: ', el('b', {}, next.title)] : []));
+}
+
+let online = false;
+function setConn(isOnline = online) {
+  online = isOnline;
+  const c = $('#conn');
+  c.classList.toggle('on', online && !paused);
+  c.classList.toggle('paused', paused);
+  c.textContent = paused ? 'Paused' : online ? 'Live' : 'Reconnecting…';
+}
+
+/* ---------------- Data ---------------- */
+
+async function refresh() {
+  try {
+    const res = await fetch('/api/notices', { cache: 'no-store', credentials: 'same-origin' });
+    if (!res.ok) throw new Error(res.status);
+    let list = (await res.json()).notices;
+    if (CATEGORIES.length) list = list.filter((n) => CATEGORIES.includes(n.category.toLowerCase()));
+    applyList(list);
+    setConn(true);
+  } catch {
+    setConn(false); // keep showing what we have
+  }
+}
+
+function applyList(list) {
+  const wasEmpty = notices.length === 0;
+  notices = list;
+  PdfView.release(new Set(list.filter((n) => n.attachment && n.attachment.kind !== 'image').map((n) => PdfView.urlFor(n.attachment))));
+  if (current) {
+    const i = list.findIndex((n) => n.id === current.id);
+    if (i >= 0) {
+      index = i;
+      if (list[i].updatedAt !== current.updatedAt) skip('reload'); // edited: show the new version
+    } else {
+      skip('reload'); // removed: whatever moved into its place plays next
+    }
+  } else if (wasEmpty && list.length) {
+    index = 0;
+    skip('reload');
+  }
+  updateFooter();
+}
+
+function connectLive() {
+  const es = new EventSource('/api/events');
+  es.onopen = () => setConn(true);
+  es.onerror = () => setConn(false);
+  es.onmessage = (e) => {
+    try {
+      if (JSON.parse(e.data).type === 'notices') refresh();
+    } catch { /* ignore */ }
+  };
+}
+
+/* ---------------- Screen housekeeping ---------------- */
+
+function tickClock() {
+  const now = new Date();
+  $('#time').textContent = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(now);
+  $('#date').textContent = new Intl.DateTimeFormat(undefined, { weekday: 'long', day: 'numeric', month: 'long' }).format(now);
+}
+
+// Hide the cursor and controls when nobody is using the mouse.
+let idleTimer;
+function wake() {
+  document.body.classList.remove('idle');
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => document.body.classList.add('idle'), 3000);
+}
+
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+}
+
+// Keep the screen from sleeping (browsers allow this on localhost/HTTPS only).
+async function keepAwake() {
+  try {
+    if ('wakeLock' in navigator && document.visibilityState === 'visible') await navigator.wakeLock.request('screen');
+  } catch { /* not available — set the TV/PC not to sleep instead */ }
+}
+
+// Reload every 6 hours to stay fresh after updates — but only if the server is reachable.
+function scheduleReload() {
+  setTimeout(async function tryReload() {
+    try {
+      const res = await fetch('/api/status', { cache: 'no-store' });
+      if (res.ok) return location.reload();
+    } catch { /* server down: keep showing the current notices */ }
+    setTimeout(tryReload, 5 * 60 * 1000);
+  }, 6 * 60 * 60 * 1000);
+}
+
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => skip('reload'), 400); // re-lay out the current slide
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight') skip('next');
+  else if (e.key === 'ArrowLeft') skip('prev');
+  else if (e.key === ' ') { e.preventDefault(); togglePause(); }
+  else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
+  else return;
+  wake();
+});
+document.addEventListener('mousemove', wake);
+document.addEventListener('visibilitychange', keepAwake);
+document.addEventListener('fullscreenchange', () => document.body.classList.toggle('fullscreen', !!document.fullscreenElement));
+$('#fullscreen').addEventListener('click', toggleFullscreen);
+
+/* ---------------- Start ---------------- */
+
+(async function boot() {
+  $('#help').hidden = false;
+  tickClock();
+  setInterval(tickClock, 1000);
+  wake();
+  keepAwake();
+  scheduleReload();
+  await refresh();
+  connectLive();
+  setInterval(refresh, 60000); // catches scheduled notices going live or expiring
+  play();
+})();

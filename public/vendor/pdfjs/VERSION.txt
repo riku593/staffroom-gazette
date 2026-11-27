@@ -1,0 +1,1 @@
+PDF.js 6.5.438 (pdfjs-dist legacy build), Apache-2.0. https://mozilla.github.io/pdf.js/

@@ -1,0 +1,4 @@
+# Keep line endings consistent across Windows/Mac/Linux.
+* text=auto eol=lf
+# Third-party bundles must stay byte-for-byte as shipped.
+public/vendor/** -text

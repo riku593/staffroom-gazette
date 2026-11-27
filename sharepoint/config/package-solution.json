@@ -1,0 +1,39 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/spfx-build/package-solution.schema.json",
+  "solution": {
+    "name": "Staffroom Gazette",
+    "id": "a0dd29d5-4574-426a-ae9a-4cd8dfc82827",
+    "version": "1.0.0.0",
+    "includeClientSideAssets": true,
+    "skipFeatureDeployment": true,
+    "developer": {
+      "name": "Staffroom Gazette",
+      "websiteUrl": "",
+      "privacyUrl": "",
+      "termsOfUseUrl": "",
+      "mpnId": "Undefined-1.24.2"
+    },
+    "metadata": {
+      "shortDescription": {
+        "default": "HR noticeboard for SharePoint, with PDF/image notices, OCR and a TV display"
+      },
+      "longDescription": {
+        "default": "Staffroom Gazette lets HR post notices (text, PDFs or images) to a SharePoint page. Text in PDFs is read automatically to suggest a headline, summary, category and take-down date; text in images is read with OCR and must be checked by HR before use. A TV display mode shows notices full screen."
+      },
+      "screenshotPaths": [],
+      "videoUrl": "",
+      "categories": []
+    },
+    "features": [
+      {
+        "title": "Staffroom Gazette",
+        "description": "Adds the Staffroom Gazette web part.",
+        "id": "ef11c6ef-cca2-4703-9c61-7b81765774e6",
+        "version": "1.0.0.0"
+      }
+    ]
+  },
+  "paths": {
+    "zippedPackage": "solution/staffroom-gazette.sppkg"
+  }
+}

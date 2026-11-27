@@ -1,5 +1,7 @@
 # The Staffroom Gazette
 
+> **SharePoint version:** on this branch, the [`sharepoint/`](sharepoint/README.md) folder has a SharePoint Online (SPFx) version of the Gazette, with no server needed. See its README to build and install it.
+
 A self-hosted company noticeboard. HR posts notices, and everyone on the company network can read them on a desktop browser, a phone or a wall screen. Nothing is sent outside your network.
 
 ## Running it

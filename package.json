@@ -1,14 +1,15 @@
 {
   "name": "staffroom-gazette",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "Staffroom Gazette - a self-hosted company noticeboard for HR teams",
   "main": "server.js",
   "private": true,
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "release": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/make-release.ps1"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.13.0"
   },
   "license": "Apache-2.0"
 }

@@ -1,9 +1,13 @@
 /*
  * Staffroom Gazette — a self-hosted company noticeboard.
- * Zero dependencies: runs on plain Node.js (18+).
+ * Zero dependencies: runs on plain Node.js (22.13+).
  *
- *   node server.js            (default port 3000)
+ *   node server.js                         (default port 3000, data in ./data)
  *   PORT=8080 node server.js
+ *   node server.js --config path\to\config.json   (used by the Windows installer)
+ *
+ * Settings, highest priority first: environment variables, the config file, defaults.
+ * Config file keys: port, host, dataDir, logFile, maxPdfMb, allowRemoteSetup.
  */
 'use strict';
 
@@ -14,15 +18,52 @@ const crypto = require('crypto');
 const os = require('os');
 const { analysePdf, suggestFromParagraphs } = require('./lib/pdftext');
 
-const PORT = parseInt(process.env.PORT, 10) || 3000;
-const HOST = process.env.HOST || '0.0.0.0';
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const VERSION = require('./package.json').version;
+
+function loadConfig() {
+  const i = process.argv.indexOf('--config');
+  if (i < 0) return {};
+  const file = path.resolve(process.argv[i + 1] || '');
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
+  } catch (err) {
+    console.error(`Could not read config file ${file}: ${err.message}`);
+    process.exit(1);
+  }
+}
+const CONFIG = loadConfig();
+
+// Optional log file (the installer runs the server in the background, with no console).
+if (process.env.LOG_FILE || CONFIG.logFile) {
+  const logFile = path.resolve(process.env.LOG_FILE || CONFIG.logFile);
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+  const out = fs.createWriteStream(logFile, { flags: 'a' });
+  for (const level of ['log', 'warn', 'error']) {
+    const original = console[level].bind(console);
+    console[level] = (...args) => {
+      original(...args);
+      const text = args.map((a) => (a instanceof Error ? a.stack : typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+      out.write(`${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} ${text.replace(/\n+$/g, '')}\n`);
+    };
+  }
+}
+
+const PORT = parseInt(process.env.PORT, 10) || parseInt(CONFIG.port, 10) || 3000;
+const HOST = process.env.HOST || CONFIG.host || '0.0.0.0';
+const DATA_DIR = path.resolve(process.env.DATA_DIR || CONFIG.dataDir || path.join(__dirname, 'data'));
+const ALLOW_REMOTE_SETUP = process.env.ALLOW_REMOTE_SETUP === '1' || CONFIG.allowRemoteSetup === true;
+
+// PDF text reading needs a recent Node; everything else works on older versions.
+const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
+if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 13)) {
+  console.warn(`Warning: Node.js ${process.versions.node} is older than 22.13. Reading text from PDFs may not work. Please update Node.js.`);
+}
 const DATA_FILE = path.join(DATA_DIR, 'gazette.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 const MAX_BODY_BYTES = 256 * 1024;
 const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
-const MAX_PDF_BYTES = (parseInt(process.env.MAX_PDF_MB, 10) || 25) * 1024 * 1024;
+const MAX_PDF_BYTES = (parseInt(process.env.MAX_PDF_MB, 10) || parseInt(CONFIG.maxPdfMb, 10) || 25) * 1024 * 1024;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const CATEGORIES = ['General', 'Policy', 'Events', 'Benefits', 'Health & Safety', 'Training', 'People', 'IT & Facilities'];
@@ -567,7 +608,7 @@ async function handleApi(req, res, url) {
 
 function canSetup(req) {
   const a = req.socket.remoteAddress || '';
-  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1' || process.env.ALLOW_REMOTE_SETUP === '1';
+  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1' || ALLOW_REMOTE_SETUP;
 }
 
 function makeUser(body) {
@@ -697,8 +738,14 @@ cleanOrphanUploads();
   }
 })();
 setInterval(cleanOrphanUploads, 6 * 60 * 60 * 1000).unref();
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') console.error(`Port ${PORT} is already in use. Stop the other program using it, or choose another port.`);
+  else console.error(err);
+  process.exit(1);
+});
 server.listen(PORT, HOST, () => {
-  console.log('\n  The Staffroom Gazette is running.\n');
+  console.log(`\n  The Staffroom Gazette v${VERSION} is running.\n`);
+  console.log(`  Data folder:        ${DATA_DIR}`);
   console.log(`  On this computer:   http://localhost:${PORT}`);
   for (const addrs of Object.values(os.networkInterfaces())) {
     for (const a of addrs || []) {

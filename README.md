@@ -1,12 +1,34 @@
 # The Staffroom Gazette
 
-> **SharePoint version:** on this branch, the [`sharepoint/`](sharepoint/README.md) folder has a SharePoint Online (SPFx) version of the Gazette, with no server needed. See its README to build and install it.
+> **SharePoint version:** the [`sharepoint/`](sharepoint/README.md) folder has a SharePoint Online (SPFx) version of the Gazette, with no server needed. It has its own build and install steps, and isn't part of the server releases.
 
 A self-hosted company noticeboard. HR posts notices, and everyone on the company network can read them on a desktop browser, a phone or a wall screen. Nothing is sent outside your network.
 
-## Running it
+## Installing on Windows (recommended)
 
-You need [Node.js](https://nodejs.org) 18 or newer. There are no packages to install.
+1. Download `staffroom-gazette-v<version>.zip` from the [Releases page](https://github.com/riku593/staffroom-gazette/releases). You can check the download against the `.sha256` file:
+   ```powershell
+   (Get-FileHash .\staffroom-gazette-v0.0.1.zip -Algorithm SHA256).Hash
+   ```
+2. Unzip it and double-click **`Install.cmd`**. Windows will ask for administrator permission.
+3. Answer the questions. The installer:
+   - checks for **Node.js 22.13 or newer**, and offers to install the LTS version with winget if it's missing
+   - copies the app to `C:\Program Files\Staffroom Gazette`
+   - keeps notices, accounts and uploads in `C:\ProgramData\Staffroom Gazette`, which only administrators can read
+   - runs the Gazette **in the background at startup**, so nobody needs to be signed in, and restarts it if it stops
+   - opens your chosen port in Windows Firewall for **Domain and Private** networks only
+   - adds Start menu shortcuts and an entry in **Settings → Apps**
+4. When it finishes, it opens the Gazette. Create the first HR admin account on that computer.
+
+**Updating:** download the new release and run `Install.cmd` again. Your notices, accounts and port are kept.
+**Uninstalling:** use **Settings → Apps → Staffroom Gazette**, or the Start menu shortcut. Your data is kept unless you type `DELETE` when asked.
+**Troubleshooting:** the log is at `C:\ProgramData\Staffroom Gazette\logs\gazette.log` (Start menu → *Staffroom Gazette log*). *Start in a window.cmd* in the program folder runs the Gazette with its output on screen.
+
+Installer options, for scripted installs: `Install.cmd -Port 8080 -Quiet`. Also available are `-NoAutoStart`, `-NoFirewall`, `-InstallDir`, `-DataDir` and `-NoBrowser`.
+
+## Running it manually (any OS)
+
+You need [Node.js](https://nodejs.org) 22.13 or newer. There are no packages to install.
 
 ```powershell
 npm start
@@ -17,7 +39,7 @@ The console prints two addresses:
 - **On this computer:** `http://localhost:3000`
 - **On your network:** something like `http://10.0.0.9:3000`. Share this one with staff.
 
-To use a different port: `$env:PORT=8080; npm start`
+To use a different port: `$env:PORT=8080; npm start`. Settings can also come from a JSON file: `node server.js --config config.json`. The keys are `port`, `host`, `dataDir`, `logFile`, `maxPdfMb` and `allowRemoteSetup`. Environment variables take priority over the file.
 
 ### First run
 
@@ -108,5 +130,15 @@ public/ocr.js       OCR in the browser (reads images and scanned PDFs)
 public/vendor/pdfjs Mozilla PDF.js 6.5 (Apache-2.0), bundled so no install is needed
 public/vendor/tesseract  Tesseract.js 7 + English data (Apache-2.0), bundled for offline OCR
 lib/pdftext.js      Reads PDF text and works out the headline, summary, category and dates
-data/               Created on first run; holds gazette.json and uploads/
+Install.cmd         Double-click Windows installer (runs installer/install.ps1)
+installer/          install.ps1 and uninstall.ps1
+tools/make-release.ps1  Builds the release zip and .sha256 (npm run release)
+sharepoint/         The SharePoint Online version (separate build; not in server releases)
+data/               Created on first run when run manually; holds gazette.json and uploads/
 ```
+
+## Making a release
+
+1. Set `version` in `package.json` and commit.
+2. Run `npm run release`. This builds `dist/staffroom-gazette-v<version>.zip` from the last commit, with `git archive`, plus a `.zip.sha256` checksum. The zip contains only the server, the installer and docs. It leaves out `sharepoint/`, `tools/`, local data and uncommitted changes.
+3. Create a GitHub release tagged `v<version>` and attach both files.

@@ -200,7 +200,7 @@ function pdfThumb(n) {
   if (n.attachment.kind === 'image') return imageThumb(n);
   const cached = thumbCache.get(n.attachment.id);
   const box = el('button', {
-    class: `pdf-thumb ${cached ? 'ready' : ''}`, type: 'button', 'data-id': n.attachment.id,
+    class: `pdf-thumb ${cached ? 'ready' : ''}`, type: 'button', 'data-id': n.attachment.id, 'data-url': PdfView.urlFor(n.attachment),
     'aria-label': `Open PDF: ${n.attachment.name}`, onclick: () => openReader(n),
   }, cached ? cached.canvas : el('canvas', { 'aria-hidden': 'true' }),
   el('span', { class: 'pdf-tag' }, cached ? pagesLabel(cached.pages) : 'PDF'));
@@ -215,7 +215,7 @@ async function renderThumb(box) {
   const id = box.dataset.id;
   const canvas = $('canvas', box);
   try {
-    const doc = await PdfView.load(PdfView.urlFor({ id }));
+    const doc = await PdfView.load(box.dataset.url);
     await PdfView.renderPage(doc, 1, canvas, { maxWidth: Math.max(box.clientWidth, 280) });
     thumbCache.set(id, { canvas, pages: doc.numPages });
     box.classList.add('ready');

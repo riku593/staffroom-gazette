@@ -1,0 +1,17 @@
+{
+  "extends": "./node_modules/@microsoft/spfx-web-build-rig/profiles/default/tsconfig-base.json",
+  "compilerOptions": {
+    // The ported board/TV code uses modern JavaScript (Set/Map iteration, async,
+    // Unicode regexes). ES5 output would silently break some of it, and
+    // SharePoint Online only supports modern browsers anyway.
+    "target": "es2020",
+    "lib": ["dom", "dom.iterable", "es2020"]
+  },
+  "watchOptions": {
+    // Prevent the TypeScript watch program from re-triggering incremental builds
+    // when the copilot-agent task regenerates its outputs (temp/copilot staging
+    // and the teams/<agent>.zip package) on every build, which otherwise causes
+    // an infinite build loop during `heft start` / `heft build-watch`.
+    "excludeDirectories": ["**/teams", "**/temp/copilot"]
+  }
+}

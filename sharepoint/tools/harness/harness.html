@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Staffroom Gazette — SharePoint harness</title>
+  <style>
+    /* A rough stand-in for a SharePoint page around the web part */
+    body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: #faf9f8; }
+    .sp-suitebar { height: 48px; background: #0f6cbd; color: #fff; display: flex; align-items: center; padding: 0 16px; font-weight: 600; }
+    .sp-canvas { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+    .sp-note { font-size: 12px; color: #605e5c; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div class="sp-suitebar">SharePoint (test harness — in-memory data)</div>
+  <div class="sp-canvas">
+    <div class="sp-note">The web part below runs the real compiled SPFx modules against a fake SharePoint back end.</div>
+    <div id="webpart"></div>
+  </div>
+  <script type="module">
+    const L = '/lib/webparts/staffroomGazette/legacy/';
+    const mode = new URLSearchParams(location.search).get('mode') || 'board';
+    const canEdit = new URLSearchParams(location.search).get('hr') !== '0';
+
+    const { boardMarkup } = await import(L + 'boardMarkup.js');
+    const { boardCss } = await import(L + 'boardCss.js');
+    const { tvMarkup } = await import(L + 'tvMarkup.js');
+    const { tvCss } = await import(L + 'tvCss.js');
+    const { startBoard } = await import(L + 'board.js');
+    const { startTv } = await import(L + 'tv.js');
+    const { startTheme } = await import(L + 'theme.js');
+    const PdfText = await import(L + 'pdftext.js');
+    window.PdfView.setBase('/vendor/pdfjs/');
+    window.Ocr.setBase('/vendor/tesseract/');
+
+    const CATEGORIES = ['General', 'Policy', 'Events', 'Benefits', 'Health & Safety', 'Training', 'People', 'IT & Facilities'];
+    const now = Date.now();
+    let nextId = 10;
+    const notices = [
+      { id: '1', title: 'Office closed 24 December', body: 'The office closes at **1pm** on Christmas Eve.\n\n- IT helpdesk on call\n- Back on 2 January', category: 'General', priority: 'urgent', pinned: true, publishAt: null, expiresAt: null, tvMode: 'auto', attachment: null, authorName: 'Priya Shah', createdAt: new Date(now - 3600e3).toISOString(), updatedAt: new Date(now - 3600e3).toISOString() },
+      { id: '2', title: 'Open enrolment closes 12 December', body: 'Review your benefits in the portal. Questions? benefits@example.com', category: 'Benefits', priority: 'important', pinned: false, publishAt: null, expiresAt: null, tvMode: 'auto', attachment: null, authorName: 'Sam Lee', createdAt: new Date(now - 86400e3).toISOString(), updatedAt: new Date(now - 86400e3).toISOString() },
+      { id: '3', title: 'Winter social', body: 'Mince pies and a quiz in the atrium, Thursday 4pm.', category: 'Events', priority: 'normal', pinned: false, publishAt: null, expiresAt: null, tvMode: 'auto', attachment: null, authorName: 'Priya Shah', createdAt: new Date(now - 2 * 86400e3).toISOString(), updatedAt: new Date(now - 2 * 86400e3).toISOString() },
+    ];
+    const uploads = new Map();
+    const watchers = [];
+    const changed = () => watchers.forEach((f) => f());
+
+    const host = {
+      root: null, tvQuery: 'interval=8', userName: 'Priya Shah',
+      async api(path, { method = 'GET', body } = {}) {
+        const [route, query] = path.split('?');
+        if (route === '/api/status') return { needsSetup: false, canSetup: true, user: canEdit ? { displayName: 'Priya Shah' } : null, categories: CATEGORIES, maxPdfMb: 25 };
+        if (route === '/api/suggest') return { suggestions: PdfText.suggestFromParagraphs(body.paragraphs, body.pageHeight, CATEGORIES, body.text) };
+        if (route === '/api/notices' && method === 'GET') return { notices: [...notices] };
+        const m = route.match(/^\/api\/notices\/(\d+)$/);
+        if (route === '/api/notices' && method === 'POST') {
+          if (body.attachment && !body.attachment.hasText && typeof body.attachment.ocrText === 'string' && body.attachment.ocrVerified !== true) throw new Error('Please check the text read from the image and confirm it before publishing.');
+          const a = body.attachment ? { ...body.attachment, text: body.attachment.hasText ? uploads.get(body.attachment.id).text : (body.attachment.ocrText || ''), textSource: body.attachment.hasText ? 'pdf' : (body.attachment.ocrText ? 'ocr' : null), ocr: body.attachment.ocrText ? { verifiedBy: 'Priya Shah', confidence: body.attachment.ocrConfidence } : null } : null;
+          const n = { ...body, id: String(nextId++), attachment: a, authorName: 'Priya Shah', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+          notices.unshift(n); changed(); return { notice: n };
+        }
+        if (m && method === 'GET') return { notice: notices.find((n) => n.id === m[1]) };
+        if (m && method === 'DELETE') { notices.splice(notices.findIndex((n) => n.id === m[1]), 1); changed(); return { ok: true }; }
+        if (m && method === 'PUT') { const i = notices.findIndex((n) => n.id === m[1]); notices[i] = { ...notices[i], ...body, attachment: body.attachment ? { ...notices[i].attachment, ...body.attachment } : null, updatedAt: new Date().toISOString() }; changed(); return { notice: notices[i] }; }
+        throw new Error('not supported ' + method + ' ' + route);
+      },
+      async upload(file) {
+        const buf = await file.arrayBuffer();
+        const isPdf = new TextDecoder('latin1').decode(new Uint8Array(buf).subarray(0, 1024)).includes('%PDF-');
+        const id = crypto.randomUUID();
+        const url = URL.createObjectURL(file);
+        let info = { text: '', hasText: false, textHeavy: false, pages: 1 }, suggestions = null;
+        if (isPdf) { const r = await PdfText.analysePdf(buf, { categories: CATEGORIES }); info = r; suggestions = r.suggestions; }
+        uploads.set(id, info);
+        return { attachment: { id, url, downloadUrl: url, name: file.name, size: file.size, kind: isPdf ? 'pdf' : 'image', ext: isPdf ? 'pdf' : 'jpg', pages: info.pages, hasText: info.hasText, textHeavy: info.textHeavy }, suggestions };
+      },
+      watch(cb) { watchers.push(cb); },
+      async ping() { return true; },
+      openTv() { window.open('/?mode=tv', '_blank'); },
+      openList() { alert('Would open the SharePoint list'); },
+    };
+    window.__harness = { host, notices };
+
+    const wp = document.getElementById('webpart');
+    const root = document.createElement('div');
+    if (mode === 'tv') {
+      const s = document.createElement('style'); s.textContent = tvCss; document.head.append(s);
+      root.className = 'sg-tv overlay'; root.innerHTML = tvMarkup; wp.append(root); host.root = root;
+      window.__running = startTv(host);
+    } else {
+      const s = document.createElement('style'); s.textContent = boardCss; document.head.append(s);
+      root.className = 'sg-board'; root.innerHTML = boardMarkup; wp.append(root); host.root = root;
+      startTheme(root);
+      window.__running = startBoard(host);
+    }
+  </script>
+</body>
+</html>

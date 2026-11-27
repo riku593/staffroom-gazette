@@ -1,0 +1,22 @@
+{
+  "@microsoft/generator-sharepoint": {
+    "whichFolder": "subdir",
+    "solutionName": "staffroom-gazette",
+    "environment": "spo",
+    "useGulp": false,
+    "componentType": "webpart",
+    "template": "none",
+    "componentName": "StaffroomGazette",
+    "componentDescription": "Company noticeboard for HR notices, with PDF/image notices, OCR and a TV display",
+    "plusBeta": false,
+    "isCreatingSolution": true,
+    "nodeVersion": "22.16.0",
+    "sdksVersions": {},
+    "version": "1.24.2",
+    "libraryName": "staffroom-gazette",
+    "libraryId": "a0dd29d5-4574-426a-ae9a-4cd8dfc82827",
+    "packageManager": "npm",
+    "solutionShortDescription": "staffroom-gazette description",
+    "skipFeatureDeployment": true
+  }
+}
